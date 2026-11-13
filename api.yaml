@@ -1,0 +1,382 @@
+openapi: 3.0.3
+info:
+  title: Workout & Strength Analytics API
+  description: API хранилища тренировочных данных, подходов и расчёта силовых показателей спортсменов.
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Локальный сервер разработки
+
+security:
+  - BearerAuth: []
+
+paths:
+  /workouts:
+    get:
+      summary: Получить список тренировок атлета
+      description: Возвращает краткий список тренировок выбранного спортсмена.
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          description: ID спортсмена, чьи тренировки нужно получить
+          schema:
+            type: integer
+            example: 12
+        - name: limit
+          in: query
+          required: false
+          description: Максимальное количество записей в ответе
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 50
+      responses:
+        '200':
+          description: Список тренировок успешно получен
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WorkoutSummary'
+        '400':
+          description: Некорректный параметр запроса
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Не авторизован — токен отсутствует или недействителен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    post:
+      summary: Записать новую тренировку
+      description: Сохраняет тренировку с подходами и рассчитывает рабочий тоннаж.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkoutCreateRequest'
+      responses:
+        '200':
+          description: Тренировка успешно сохранена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutDetailResponse'
+        '400':
+          description: Ошибка валидации данных (RPE вне диапазона 1-10 или пустые подходы)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Не авторизован — требуется токен доступа
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /workouts/{workout_id}:
+    get:
+      summary: Получить детали тренировки и расчёт килограмм 
+      description: Возвращает полную информацию о тренировке, список подходов и силовые показатели.
+      parameters:
+        - name: workout_id
+          in: path
+          required: true
+          description: Уникальный идентификатор тренировки
+          schema:
+            type: integer
+            example: 105
+      responses:
+        '200':
+          description: Детали тренировки и аналитика нагрузки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutDetailResponse'
+        '403':
+          description: Доступ запрещён — попытка просмотреть тренировку чужого атлета
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Тренировка с указанным ID не найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    patch:
+      summary: Обновить оценку сложности или длительность тренировки
+      description: Частичное обновление метаданных завершённой тренировки без перезаписи подходов.
+      parameters:
+        - name: workout_id
+          in: path
+          required: true
+          description: Уникальный идентификатор тренировки
+          schema:
+            type: integer
+            example: 105
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkoutUpdateRequest'
+      responses:
+        '200':
+          description: Параметры тренировки успешно обновлены
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkoutSummary'
+        '400':
+          description: Недопустимое значение RPE (должно быть от 1 до 10) или длительности
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Тренировка для обновления не найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      summary: Удалить ошибочную тренировку
+      description: Удаляет тренировку и связанные с ней подходы из статистики атлета.
+      parameters:
+        - name: workout_id
+          in: path
+          required: true
+          description: Уникальный идентификатор удаляемой тренировки
+          schema:
+            type: integer
+            example: 105
+      responses:
+        '200':
+          description: Тренировка успешно удалена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: deleted
+                  deleted_id:
+                    type: integer
+                    example: 105
+        '403':
+          description: Недостаточно прав для удаления чужого тренировки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Тренировка с указанным ID не найдена
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    SetInput:
+      type: object
+      required:
+        - exercise_id
+        - set_order
+        - weight_kg
+        - reps
+        - set_type
+      properties:
+        exercise_id:
+          type: integer
+          example: 3
+        set_order:
+          type: integer
+          minimum: 1
+          example: 1
+        weight_kg:
+          type: number
+          format: float
+          minimum: 0
+          example: 100.5
+        reps:
+          type: integer
+          minimum: 1
+          example: 8
+        set_type:
+          type: string
+          enum:
+            - warmup
+            - working
+          example: working
+
+    SetOutput:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 501
+        exercise_name:
+          type: string
+          example: Приседания со штангой
+        muscle_group:
+          type: string
+          example: Ноги
+        set_order:
+          type: integer
+          example: 1
+        weight_kg:
+          type: number
+          format: float
+          example: 100.5
+        reps:
+          type: integer
+          example: 8
+        set_type:
+          type: string
+          enum:
+            - warmup
+            - working
+          example: working
+        set_tonnage_kg:
+          type: number
+          format: float
+          description: Рассчитанный тоннаж подхода
+          example: 804.0
+
+    WorkoutCreateRequest:
+      type: object
+      required:
+        - client_id
+        - date
+        - duration_minutes
+        - rpe
+        - sets
+      properties:
+        client_id:
+          type: integer
+          example: 12
+        date:
+          type: string
+          format: date
+          example: "2026-11-10"
+        duration_minutes:
+          type: integer
+          minimum: 1
+          example: 65
+        rpe:
+          type: integer
+          minimum: 1
+          maximum: 10
+          description: Субъективная оценка сложности тренировки от 1 до 10
+          example: 8
+        sets:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/SetInput'
+
+    WorkoutUpdateRequest:
+      type: object
+      properties:
+        duration_minutes:
+          type: integer
+          minimum: 1
+          example: 70
+        rpe:
+          type: integer
+          minimum: 1
+          maximum: 10
+          example: 9
+
+    WorkoutSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 105
+        client_id:
+          type: integer
+          example: 12
+        date:
+          type: string
+          format: date
+          example: "2026-11-10"
+        duration_minutes:
+          type: integer
+          example: 65
+        rpe:
+          type: integer
+          example: 8
+        working_tonnage_kg:
+          type: number
+          format: float
+          description: Суммарный рабочие килограммы за тренировку
+          example: 4250.0
+
+    WorkoutDetailResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 105
+        client_name:
+          type: string
+          example: Алексей Смирнов
+        date:
+          type: string
+          format: date
+          example: "2026-11-10"
+        duration_minutes:
+          type: integer
+          example: 65
+        rpe:
+          type: integer
+          example: 8
+        working_tonnage_kg:
+          type: number
+          format: float
+          description: Суммарные килограммы только по рабочим подходам
+          example: 4250.0
+        working_sets_count:
+          type: integer
+          description: Количество рабочих подходов
+          example: 12
+        sets:
+          type: array
+          items:
+            $ref: '#/components/schemas/SetOutput'
+
+    ErrorResponse:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          example: 404
+        message:
+          type: string
+          example: Тренировка с указанным ID не найдена
